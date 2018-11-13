@@ -1,0 +1,801 @@
+<?php
+/**
+ * @file
+ * Defines infrastructure for CiviCRM Entity to Salesforce sync
+ */
+
+/**
+ * Implements hook_permission().
+ *
+ * @return array
+ */
+function civicrm_entity_salesforce_permission() {
+  $permissions = array(
+    'administer civicrm entity salesforce' => array(
+      'title' => t('Administer CiviCRM Entity Salesforce'),
+      'description' => t('Configure CiviCRM Entity Salesforce settings and mappings'),
+    ),
+    'administer civicrm entity salesforce mapping queue items' => array(
+      'title' => t('Administer CiviCRM Entity Salesforce Mapping Queues'),
+      'description' => t('View and configure CiviCRM Entity Salesforce Mapping Queues'),
+    ),
+  );
+
+  return $permissions;
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * @return mixed
+ */
+function civicrm_entity_salesforce_menu() {
+  $items['admin/structure/civicrm-entity-salesforce'] = array(
+    'title' => 'CiviCRM Entity Salesforce',
+    'description' => 'CiviCRM Entity Salesforce settings and mappings',
+    'page callback' => 'system_admin_menu_block_page',
+    'access arguments' => array('administer civicrm entity salesforce'),
+    'file path' => drupal_get_path('module', 'system'),
+    'file' => 'system.admin.inc',
+  );
+
+  $items['admin/structure/civicrm-entity-salesforce/settings'] = array(
+    'title' => 'Settings',
+    'description' => 'List of available CiviCRM to Salesforce mappings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('civicrm_entity_salesforce_settings_form'),
+    'access arguments' => array('administer civicrm entity salesforce'),
+    'file path' => drupal_get_path('module', 'civicrm_entity_salesforce') . '/forms',
+    'file' => 'settings.admin.inc',
+  );
+
+  $items['admin/structure/civicrm-entity-salesforce/mappings'] = array(
+    'title' => 'Mappings List Admin',
+    'description' => 'List of available CiviCRM to Salesforce mappings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('civicrm_entity_salesforce_mappings_list_form'),
+    'access arguments' => array('administer civicrm entity salesforce'),
+    'file path' => drupal_get_path('module', 'civicrm_entity_salesforce') . '/forms',
+    'file' => 'mappings.admin.inc',
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_ctools_plugin_type().
+ *
+ * @return array
+ */
+function civicrm_entity_salesforce_ctools_plugin_type() {
+  return array(
+    'civicrm_entity_salesforce_mapping' => array(
+      'label' => 'CiviCRM Entity Salesforce Mapping',
+      'cache' => TRUE,
+      'classes' => array('class'),
+      'load themes' => FALSE,
+      'use hooks' => FALSE,
+      'process' => 'civicrm_entity_salesforce_process_plugin_mapping',
+    )
+  );
+}
+
+/**
+ * Plugin process callback for 'civicrm_entity_salesforce_mapping' plugins
+ *
+ * @param $plugin
+ * @param $info
+ */
+function civicrm_entity_salesforce_process_plugin_mapping(&$plugin, $info) {
+  // nothing to do at moment
+}
+
+/**
+ * Utility function to load all plugin definitions of type 'civicrm_entity_salesforce_mapping'
+ *
+ * @return array
+ */
+function civicrm_entity_salesforce_get_all_plugins() {
+  ctools_include('plugins');
+  return ctools_get_plugins('civicrm_entity_salesforce', 'civicrm_entity_salesforce_mapping');
+}
+
+/**
+ * Utility function to load plugin definition given name
+ *
+ * @param $name
+ *
+ * @return array
+ */
+function civicrm_entity_salesforce_get_plugin($name) {
+  ctools_include('plugins');
+  return ctools_get_plugins('civicrm_entity_salesforce', 'civicrm_entity_salesforce_mapping', $name);
+}
+
+/**
+ * Utility function to load Sync Mapping class for a 'civicrm_entity_salesforce_mapping' plugin
+ *
+ * @param $plugin
+ *
+ * @return bool
+ */
+function civicrm_entity_salesforce_get_mapping_class($plugin) {
+  $cache = &drupal_static(__FUNCTION__, array());
+  if (empty($cache[$plugin['name']])) {
+    $plugin_class = ctools_plugin_get_class($plugin, 'class');
+
+    if ($plugin_class) {
+      $cache[$plugin['name']] = new $plugin_class;
+      $cache[$plugin['name']]->init($plugin);
+    }
+  }
+  return !empty($cache[$plugin['name']]) ? $cache[$plugin['name']] : FALSE;
+}
+
+/**
+ * Utility function to fetch default schema for mapping queue tables
+ *
+ * @return array
+ */
+function civicrm_entity_salesforce_get_default_mapping_queue_schema() {
+  $schema = [
+    'description' => 'Table used as salesforce sync mapping queue',
+    'fields' => [
+      'id' => [
+        'type' => 'serial',
+        'description' => 'Machine id of the mapping queue item',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'mapping_id' => [
+        'type' => 'int',
+        'description' => 'Drupal ID of the civicrm_entity_salesforce_mapping entity linked to this queue table.',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'entity_type' => [
+        'description' => 'Entity type to sync',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ],
+      'salesforce_object' => [
+        'description' => 'Salesforce object name to sync to',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ],
+      'entity_id' => [
+        'type' => 'int',
+        'description' => 'ID of the entity that is synced.',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'entity_label' => [
+        'description' => 'Label of the entity, e.g. contact display name, or organization name',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ],
+      'salesforce_id' => [
+        'type' => 'varchar',
+        'description' => 'ID of the salesforce id that the entity is synced to.',
+        'length' => 255,
+      ],
+      'sync_status' => [
+        'description' => 'Sync status. 0 = no need to sync, 1 = should sync.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 1,
+      ],
+      'delete' => [
+        'description' => 'Flag to delete on next sync, 0 = do not delete, 1 = delete',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'last_queued_to_sync_date' => [
+        'description' => 'The Unix timestamp when the mapping queue entry sync_status was last updated to 1.',
+        'type' => 'int',
+      ],
+      'last_sync_date' => [
+        'description' => 'The Unix timestamp when the mapping queue entry was synced last.',
+        'type' => 'int',
+      ],
+      'created' => [
+        'description' => 'The Unix timestamp when the mapping queue entry was created.',
+        'type' => 'int',
+        'not null' => TRUE,
+      ],
+      'updated' => [
+        'description' => 'The Unix timestamp when the mapping queue entry was updated.',
+        'type' => 'int',
+        'not null' => TRUE,
+      ],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => [
+      'entity_id' =>  ['entity_id'],
+    ],
+    'indexes' => [
+      'mapping_id' => ['mapping_id'],
+      'sync_status' => ['sync_status'],
+      'salesforce_id' => ['salesforce_id'],
+      'entity_type' => ['entity_type'],
+      'salesforce_object' => ['salesforce_object'],
+      'delete' => ['delete'],
+    ],
+  ];
+  return $schema;
+}
+
+/**
+ * Implements hook_entity_info().
+ */
+function civicrm_entity_salesforce_entity_info() {
+  // mapping plugin entity type
+  // to correspond with enabled mapping/sync plugins
+  $info['civicrm_entity_salesforce_mapping'] = array(
+    'label' => t('CiviCRM Entity Salesforce Mapping'),
+    // The entity class and controller class extend the classes provided by the
+    // Entity API
+    'entity class' => 'CivicrmEntitySalesforceMapping',
+    'controller class' => 'CivicrmEntitySalesforceMappingController',
+    'metadata controller class' => 'CivicrmEntitySalesforceMappingMetadataController',
+    'views controller class' => 'CivicrmEntitySalesforceMappingDefaultViewsController',
+    'extra fields controller class' => 'CivicrmEntitySalesforceMappingExtraFieldsController',
+    'base table' => 'civicrm_entity_salesforce_mapping',
+    'fieldable' => FALSE,
+    'entity keys' => array(
+      'id' => 'id',
+      'label' => 'title'
+    ),
+    //'bundles' => array(),
+    'label callback' => 'entity_class_label',
+    'uri callback' => 'entity_class_uri',
+    'creation callback' => 'civicrm_entity_salesforce_mapping_create',
+    'access callback' => 'civicrm_entity_salesforce_mapping_access',
+    'module' => 'civicrm_entity_salesforce',
+    'admin ui' => array(
+      'path' => 'admin/structure/civicrm-entity-salesforce/mappings',
+      'controller class' => 'CivicrmEntitySalesforceMappingUIController',
+      'menu wildcard' => '%mapping_loader',
+    ),
+  );
+
+  // sync log
+
+  $info['civicrm_entity_salesforce_mapping_sync_log'] = [
+    'label' => t('CiviCRM Entity Salesforce Mapping Sync Log'),
+    // The entity class and controller class extend the classes provided by the
+    // Entity API
+    'entity class' => 'CivicrmEntitySalesforceMappingSyncLog',
+    'controller class' => 'CivicrmEntitySalesforceMappingSyncLogController',
+    'metadata controller class' => 'CivicrmEntitySalesforceMappingSyncLogMetadataController',
+    'views controller class' => 'CivicrmEntitySalesforceMappingSyncLogDefaultViewsController',
+    'extra fields controller class' => 'EntityDefaultExtraFieldsController',
+    'base table' => 'civicrm_entity_salesforce_mapping_sync_log',
+    'fieldable' => FALSE,
+    'entity keys' => array(
+      'id' => 'id',
+      'label' => 'id'
+    ),
+    'bundles' => array(),
+    'label callback' => 'entity_class_label',
+    'uri callback' => 'entity_class_uri',
+    //'creation callback' => 'civicrm_entity_salesforce_mapping_create',
+    //'access callback' => 'civicrm_entity_salesforce_mapping_access',
+    'module' => 'civicrm_entity_salesforce',
+  ];
+
+  // setup the entity info for our plugins queue/mapping tables
+  $plugins = civicrm_entity_salesforce_get_all_plugins();
+  if (!empty($plugins)) {
+    foreach ($plugins as $plugin_name => $plugin) {
+      $handler = civicrm_entity_salesforce_get_mapping_class($plugin);
+      $plugins[$plugin_name]['handler'] = $handler;
+      if (!empty($handler) && is_object($handler) && db_table_exists($handler->getQueueEntityType())) {
+        $info[$handler->getQueueEntityType()] = [
+          'label' => t('CiviCRM Entity Salesforce Mapping Queue ' . $plugin['title']),
+          // The entity class and controller class extend the classes provided by the
+          // Entity API
+          'entity class' => 'CivicrmEntitySalesforceMappingQueue',
+          'controller class' => 'CivicrmEntitySalesforceMappingQueueController',
+          'metadata controller class' => 'CivicrmEntitySalesforceMappingQueueMetadataController',
+          'views controller class' => 'CivicrmEntitySalesforceMappingQueueDefaultViewsController',
+          'extra fields controller class' => 'CivicrmEntitySalesforceMappingQueueExtraFieldsController',
+          'base table' => $handler->getQueueEntityType(),
+          'fieldable' => FALSE,
+          'entity keys' => array(
+            'id' => 'id',
+            'label' => 'entity_label'
+          ),
+          'label callback' => 'entity_class_label',
+          'uri callback' => 'entity_class_uri',
+          'creation callback' => 'civicrm_entity_salesforce_mapping_queue_item_create',
+          'access callback' => 'civicrm_entity_salesforce_mapping_queue_item_access',
+          'module' => 'civicrm_entity_salesforce',
+        ];
+      }
+    }
+  }
+
+  return $info;
+}
+
+/**
+ * Implements hook_schema_alter().
+ *
+ * @param $schema
+ */
+function civicrm_entity_salesforce_schema_alter(&$schema) {
+  // make sure Drupal is aware of our plugin queue entities schema
+  $plugins = civicrm_entity_salesforce_get_all_plugins();
+  if (!empty($plugins)) {
+    foreach ($plugins as $plugin_name => $plugin) {
+      $handler = civicrm_entity_salesforce_get_mapping_class($plugin);
+      $plugins[$plugin_name]['handler'] = $handler;
+      if (!empty($handler) && is_object($handler)) {
+        $schema[$handler->getQueueEntityType()] = civicrm_entity_salesforce_get_default_mapping_queue_schema();
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_views_api().
+ *
+ * @return array
+ */
+function civicrm_entity_salesforce_views_api() {
+  return array(
+    'api' => 3,
+    'path' => drupal_get_path('module', 'civicrm_entity_salesforce') . '/views',
+  );
+}
+
+/**
+ * Implements hook_theme().
+ *
+ * @return array
+ */
+function civicrm_entity_salesforce_theme() {
+  return [
+    'civicrm_entity_salesforce_mapping_data_view' => [
+      'template' => 'civicrm-entity-mapping-view',
+      'path' => drupal_get_path('module', 'civicrm_entity_salesforce') . '/templates',
+      'variables' => [
+        'mapping' => NULL,
+        'content' => NULL,
+        'view' => NULL,
+        'name' => NULL,
+        'title' => NULL,
+        'enabled' => NULL,
+        'installed' => NULL,
+        'total_count' => NULL,
+        'sync_count' => NULL,
+        'synced_count' => NULL,
+      ],
+    ],
+  ];
+}
+
+/**
+ * Implements template_preprocess_THEMEKEY
+ *
+ * @param $variables
+ */
+function template_preprocess_civicrm_entity_salesforce_mapping_data_view(&$variables) {
+  drupal_add_css(drupal_get_path('module', 'civicrm_entity_salesforce') . '/css/mapping-view-page.css');
+  if (!empty($variables['mapping'])) {
+    $mapping = $variables['mapping'];
+    $plugin_name = $mapping->name;
+    $plugin = civicrm_entity_salesforce_get_plugin($plugin_name);
+    $handler = civicrm_entity_salesforce_get_mapping_class($plugin);
+    $variables['name'] = $mapping->name;
+    $variables['title'] = $mapping->title;
+    $variables['enabled'] = !empty($mapping->enabled) ? 'Yes' : 'No';
+    $variables['installed'] = db_table_exists($handler->getQueueEntityType()) ? 'Yes' : 'No';
+    $variables['total_count'] = civicrm_entity_salesforce_mapping_queue_count($handler->getQueueEntityType());
+    $variables['sync_count'] = civicrm_entity_salesforce_mapping_queue_count($handler->getQueueEntityType(), 1);
+    $variables['synced_count'] = $variables['total_count'] - $variables['sync_count'];
+    $variables['content']['heading'] = [
+      '#type' => 'markup',
+      '#markup' => '',
+      '#weight' => 1,
+    ];
+    $variables['view'] = '';
+  }
+}
+
+/**
+ * Determines whether the given user has access to a CiviCRM Entity Salesforce Mapping.
+ *
+ * @param null $mapping
+ * @param null $account
+ *
+ * @return bool
+ */
+function civicrm_entity_salesforce_mapping_access($mapping = NULL, $account = NULL) {
+  if (is_null($account)) {
+    global $user;
+    $account = $user;
+  }
+  if (user_access('administer civicrm entity salesforce', $account)) {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+/**
+ * Determines whether the give user has access to a CivICRM Entity Salesforce Mapping Queue item
+ *
+ * @param null $queue_item
+ * @param null $account
+ *
+ * @return bool
+ */
+function civicrm_entity_salesforce_mapping_queue_item_access($queue_item = NULL, $account = NULL) {
+  if (is_null($account)) {
+    global $user;
+    $account = $user;
+  }
+  if (user_access('administer civicrm entity salesforce mapping queue items', $account)) {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+/**
+ * Loads a CiviCRM Entity Salesforce Mapping entity
+ *
+ * @param $id
+ * @param bool $reset
+ *
+ * @return mixed
+ */
+function civicrm_entity_salesforce_mapping_load($id, $reset = FALSE) {
+  $mappings = civicrm_entity_salesforce_mapping_load_multiple(array($id), array(), $reset);
+  return reset($mappings);
+}
+
+/**
+ * Loads CiviCRM Entity Salesforce Mapping entities
+ *
+ * @param array $ids
+ * @param array $conditions
+ * @param bool $reset
+ *
+ * @return mixed
+ */
+function civicrm_entity_salesforce_mapping_load_multiple($ids = array(), $conditions = array(), $reset = FALSE) {
+  return entity_load('civicrm_entity_salesforce_mapping', $ids, $conditions, $reset);
+}
+
+/**
+ * Deletes a CiviCRM Entity Salesforce Mapping entity.
+ *
+ * @param \CivicrmEntitySalesforceMapping $mapping
+ */
+function civicrm_entity_salesforce_mapping_delete(CivicrmEntitySalesforceMapping $mapping) {
+  $mapping->delete();
+}
+
+/**
+ * Delete multiple CiviCRM Entity Salesforce Mapping entities
+ *
+ * @param $ids
+ */
+function civicrm_entity_salesforce_mapping_delete_multiple(array $ids) {
+  entity_get_controller('civicrm_entity_salesforce_mapping')->delete($ids);
+}
+
+/**
+ * Create a civicrm_entity_salesforce_mapping entity.
+ *
+ * @param array $values
+ *
+ * @return mixed
+ */
+function civicrm_entity_salesforce_mapping_create($values = []) {
+  return entity_get_controller('civicrm_entity_salesforce_mapping')->create($values);
+}
+
+/**
+ * Saves a civicrm_entity_salesforce_mapping entity to the database.
+ *
+ * @param $mapping
+ */
+function civicrm_entity_salesforce_mapping_save(CivicrmEntitySalesforceMapping $mapping) {
+  return $mapping->save();
+}
+
+/**
+ * Loads a CiviCRM Entity Salesforce Mapping Queue Item entity
+ *
+ * @param $entity_type
+ * @param $id
+ * @param bool $reset
+ *
+ * @return mixed
+ */
+function civicrm_entity_salesforce_mapping_queue_item_load($entity_type, $id, $reset = FALSE) {
+  $items = civicrm_entity_salesforce_mapping_queue_item_load_multiple($entity_type, array($id), array(), $reset);
+  return reset($items);
+}
+
+/**
+ * Loads CiviCRM Entity Salesforce Mapping entities
+ *
+ * @param $entity_type
+ * @param array $ids
+ * @param array $conditions
+ * @param bool $reset
+ *
+ * @return mixed
+ */
+function civicrm_entity_salesforce_mapping_queue_item_load_multiple($entity_type, $ids = array(), $conditions = array(), $reset = FALSE) {
+  return entity_load($entity_type, $ids, $conditions, $reset);
+}
+
+/**
+ * @param $values
+ * @param $entity_type
+ */
+function civicrm_entity_salesforce_mapping_queue_item_create($values = [], $entity_type) {
+  return entity_get_controller($entity_type)->create($values);
+}
+
+/**
+ * Saves a civicrm_entity_salesforce_mapping entity to the database.
+ *
+ * @param $queue_item
+ */
+function civicrm_entity_salesforce_mapping_queue_item_save(CivicrmEntitySalesforceMappingQueue $queue_item) {
+  return $queue_item->save();
+}
+
+/**
+ * Deletes a CiviCRM Entity Salesforce Mapping Queue item entity.
+ *
+ * @param \CivicrmEntitySalesforceMappingQueue $queue_item
+ */
+function civicrm_entity_salesforce_mapping_queue_item_delete(CivicrmEntitySalesforceMappingQueue $queue_item) {
+  $queue_item->delete();
+}
+
+/**
+ * Delete multiple CiviCRM Entity Salesforce Mapping Queue item entities
+ *
+ * @param $ids
+ * @param $entity_type
+ */
+function civicrm_entity_salesforce_mapping_queue_item_delete_multiple(array $ids, $entity_type) {
+  entity_get_controller($entity_type)->delete($ids);
+}
+
+/**
+ * Utility function to load a civicrm entity salesforce mapping entity by plugin machine name
+ *
+ * @param $name
+ *
+ * @return object|bool
+ */
+function civicrm_entity_salesforce_load_mapping_entity_by_name($name) {
+  $conditions = [
+    'name' => $name,
+  ];
+  $mappings = civicrm_entity_salesforce_mapping_load_multiple(FALSE, $conditions);
+  if (!empty($mappings)) {
+    $id = array_keys($mappings)[0];
+    return $mappings[$id];
+  }
+  return FALSE;
+}
+
+/**
+ * Utility function to check if an item exists in a queue entity type table
+ *
+ * @param $queue_entity_type
+ * @param $entity_id
+ *
+ * @return int
+ */
+function civicrm_entity_salesforce_mapping_queue_item_exists($queue_entity_type, $entity_id) {
+  $result = db_select($queue_entity_type, 'q')
+    ->fields('q', ['id'])
+    ->condition('entity_id', $entity_id, '=')
+    ->execute()
+    ->rowCount();
+  return $result;
+}
+
+/**
+ * Utility function to get queue counts
+ *
+ * @param $queue_entity_type
+ * @param null|int $sync_status
+ *
+ * @return mixed
+ */
+function civicrm_entity_salesforce_mapping_queue_count($queue_entity_type, $sync_status = NULL) {
+  $query = db_select($queue_entity_type, 'q')->fields('q', ['id']);
+  if (!is_null($sync_status)) {
+    $query->condition('sync_status', $sync_status, '=');
+  }
+  $result = $query->execute()->rowCount();
+  return $result;
+}
+
+/**
+ * Batch worker callback for sync plugins populate method
+ *
+ * @param $entity_id
+ * @param $queue_entity_type
+ * @param $sync_entity_type
+ * @param $salesforce_object_type
+ * @param $label_property
+ * @param $plugin_name
+ * @param $context
+ */
+function civicrm_entity_salesforce_mapping_populate_batch_worker($entity_id, $queue_entity_type, $sync_entity_type, $salesforce_object_type, $label_property, $plugin_name, &$context) {
+  $exists = civicrm_entity_salesforce_mapping_queue_item_exists($queue_entity_type, $entity_id);
+  if (!$exists) {
+    $entity = entity_load_single($sync_entity_type, $entity_id);
+    $mapping_entity = civicrm_entity_salesforce_load_mapping_entity_by_name($plugin_name);
+    $values = [
+      'mapping_id'               => $mapping_entity->id,
+      'entity_type'              => $sync_entity_type,
+      'entity_id'                => $entity_id,
+      'entity_label'             => $entity->{$label_property},
+      'salesforce_object'        => $salesforce_object_type,
+      'last_queued_to_sync_date' => time(),
+    ];
+    $queue_item = civicrm_entity_salesforce_mapping_queue_item_create($values, $queue_entity_type);
+    try {
+      civicrm_entity_salesforce_mapping_queue_item_save($queue_item);
+      $context['results'][] = 1;
+    }
+    catch (Exception $e) {
+      $context['results'][] = 0;
+      watchdog('civicrm_entity_salesforce_mapping_populate', $e->getMessage());
+    }
+  }
+  else {
+    $context['results'][] = 2;
+  }
+}
+
+/**
+ * Convention course enrollment batch process finished callback
+ *
+ * @param $success
+ * @param $results
+ * @param $operations
+ */
+function civicrm_entity_salesforce_mapping_populate_batch_finished($success, $results, $operations) {
+  if ($success) {
+    // Here we could do something meaningful with the results.
+    $created_count = 0;
+    $existed_count = 0;
+    $error_count = 0;
+    if (!empty($results)) {
+      foreach ($results as $result) {
+        if ($result == 1) {
+          $created_count += 1;
+        }
+        elseif ($result == 2) {
+          $existed_count += 1;
+        }
+        elseif ($result == 0) {
+          $error_count += 1;
+        }
+      }
+    }
+    drupal_set_message($created_count . ' queue items created successfully. ' . $existed_count . ' queue items existed already. ' . $error_count . ' queue items had errors on creation. ');
+  }
+  else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    drupal_set_message(t('An error occurred while processing @operation with arguments : @args', array('@operation' => $error_operation[0], '@args' => print_r($error_operation[0], TRUE))));
+  }
+}
+
+/**
+ * Delete all queue items from queue batch worker
+ *
+ * @param $id
+ * @param $queue_entity_type
+ * @param $context
+ */
+function civicrm_entity_salesforce_mapping_flush_batch_worker($id, $queue_entity_type, &$context) {
+  try {
+    $queue_item = entity_load_single($queue_entity_type, $id);
+    civicrm_entity_salesforce_mapping_queue_item_delete($queue_item);
+    $context['results'][] = 1;
+  }
+  catch (Exception $e) {
+    $context['results'][] = 0;
+    watchdog('civicrm_entity_salesforce_mapping_flush', $e->getMessage());
+  }
+}
+
+/**
+ * Delete all queue items from queue batch finished callback
+ *
+ * @param $success
+ * @param $results
+ * @param $operations
+ */
+function civicrm_entity_salesforce_mapping_flush_batch_finished($success, $results, $operations) {
+  if ($success) {
+    // Here we could do something meaningful with the results.
+    $deleted_count = 0;
+    $error_count = 0;
+    if (!empty($results)) {
+      foreach ($results as $result) {
+        if ($result == 1) {
+          $deleted_count += 1;
+        }
+        elseif ($result == 0) {
+          $error_count += 1;
+        }
+      }
+    }
+    drupal_set_message($deleted_count . ' queue items deleted successfully. ' . $error_count . ' queue items had errors on deletion. ');
+  }
+  else {
+    // An error occurred.
+    // $operations contains the operations that remained unprocessed.
+    $error_operation = reset($operations);
+    drupal_set_message(t('An error occurred while processing @operation with arguments : @args', array('@operation' => $error_operation[0], '@args' => print_r($error_operation[0], TRUE))));
+  }
+}
+
+/**
+ * Implements hook_civicrm_post().
+ *
+ * @param $op
+ * @param $objectName
+ * @param $objectId
+ * @param $objectRef
+ */
+function civicrm_entity_salesforce_civicrm_post($op, $objectName, $objectId, &$objectRef) {
+  $plugins = civicrm_entity_salesforce_get_all_plugins();
+  if (!empty($plugins)) {
+    foreach ($plugins as $plugin_name => $plugin) {
+      $handler = civicrm_entity_salesforce_get_mapping_class($plugin);
+      switch($op) {
+        case 'create':
+          $handler->entityInsert($objectName, $objectId, $objectRef);
+          break;
+        case 'edit':
+          $handler->entityUpdate($objectName, $objectId, $objectRef);
+          break;
+        case 'delete':
+          $handler->entityDelete($objectName, $objectId, $objectRef);
+          break;
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_civicrm_custom().
+ *
+ * we may not need to implement this...perhaps only if the CustomValue API is used
+ *
+ * @param $op
+ * @param $groupID
+ * @param $entityID
+ * @param $params
+ */
+function civicrm_entity_salesforce_civicrm_custom($op, $groupID, $entityID, &$params) {
+  $plugins = civicrm_entity_salesforce_get_all_plugins();
+  if (!empty($plugins)) {
+    foreach ($plugins as $plugin_name => $plugin) {
+        $handler = civicrm_entity_salesforce_get_mapping_class($plugin);
+        $handler->civicrmCustomHook($op, $groupID, $entityID, $params);
+    }
+  }
+}

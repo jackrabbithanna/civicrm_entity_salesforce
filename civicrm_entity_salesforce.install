@@ -1,0 +1,166 @@
+<?php
+
+/**
+ * Implements hook_install().
+ */
+function civicrm_entity_salesforce_install() {
+
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function civicrm_entity_salesforce_uninstall() {
+  // uninstall any mapping queue tables
+  $installed_plugin_queues = variable_get('civicrm_entity_salesforce_installed_queues', []);
+  foreach ($installed_plugin_queues as $queue_name => $entity_type) {
+    if (db_table_exists($entity_type)) {
+      db_drop_table($entity_type);
+    }
+  }
+
+  if ($view = views_get_view('civicrm_entity_salesforce_mapping_sync_log')) {
+    views_delete_view($view);
+  }
+
+  // delete stored variables
+  variable_del('civicrm_entity_salesforce_settings');
+  variable_del('civicrm_entity_salesforce_installed_queues');
+}
+
+/**
+ * Implements hook_schema().
+ *
+ * @return array
+ */
+function civicrm_entity_salesforce_schema() {
+  $schema = [];
+  $schema['civicrm_entity_salesforce_mapping'] = array(
+    'description' => 'The base table for civicrm_entity_salesforce_mapping entities.',
+    'fields' => array(
+      'id' => array(
+        'description' => 'Primary Key: Identifier for a civicrm_entity_salesforce_mapping entity.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'name' => array(
+        'description' => 'The machine name of the civicrm_entity_salesforce_mapping entity. Will match plugin name',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'title' => array(
+        'description' => 'The title of the civicrm_entity_salesforce_mapping entity. Will match plugin title',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'enabled' => array(
+        'description' => 'civicrm_entity_salesforce_mapping enabled status.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'created' => array(
+        'description' => 'The Unix timestamp when the civicrm_entity_salesforce_mapping was created.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'updated' => array(
+        'description' => 'The Unix timestamp when the civicrm_entity_salesforce_mapping was most recently saved.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'data' => array(
+        'type' => 'blob',
+        'not null' => FALSE,
+        'size' => 'big',
+        'serialize' => TRUE,
+        'description' => 'A serialized array of additional data.',
+      ),
+    ),
+    'primary key' => array('id'),
+    'unique keys' => array(
+      'name' => array('name'),
+    ),
+  );
+
+  // syncing log
+  $schema['civicrm_entity_salesforce_mapping_sync_log'] = array(
+    'description' => 'The base table for civicrm_entity_salesforce_mapping queue sync log.',
+    'fields' => array(
+      'id' => array(
+        'description' => 'Primary Key: Identifier for a civicrm_entity_salesforce_mapping entity.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'mapping_id' => array(
+        'description' => 'ID of civicrm_entity_salesforce_mapping entity this log entry is for.',
+        'type' => 'int',
+        'not null' => TRUE,
+      ),
+      'plugin_name' => array(
+        'description' => 'The machine name of the civicrm_entity_salesforce_mapping CTools plugin doing the sync action',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ),
+      'queue_entity_table' => array(
+        'description' => 'The table storing the queue items that are synced.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'queue_id' => array(
+        'description' => 'ID of the queue entity table item this log entry is for.',
+        'type' => 'int',
+        'not null' => TRUE,
+      ),
+      'queue_entity_id' => array(
+        'description' => 'The entity ID of the entity that was synced.',
+        'type' => 'int',
+        'not null' => TRUE,
+      ),
+      'result' => array(
+        'description' => 'The result of the queue item sync attempt. 1 = success, 0 = error',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'created' => array(
+        'description' => 'The Unix timestamp when the log item was created.',
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'api_action' => array(
+        'description' => 'The API action taken on sync, e.g create, update, delete',
+        'type' => 'varchar',
+        'length' => 25,
+        'not null' => TRUE,
+      ),
+      'api_message' => array(
+        'description' => 'The message returned by the Salesforce API for the sync attempt',
+        'type' => 'varchar',
+        'length' => 255,
+        'default' => '',
+      ),
+    ),
+    'primary key' => array('id'),
+    'indexes' => array(
+      'result' => array('result'),
+      'mapping_id' => array('mapping_id'),
+      'queue_id' => array('queue_entity_id'),
+      'queue_entity_table' => array('queue_entity_table'),
+      'queue_entity_id' => array('queue_entity_id'),
+    ),
+  );
+
+  return $schema;
+}

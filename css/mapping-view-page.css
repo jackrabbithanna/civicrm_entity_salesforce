@@ -1,0 +1,13 @@
+.civicrm-entity-salesforce-mapping .status-block {
+  padding-bottom: 0.5em;
+  border-bottom: 2px solid #eaeaea;
+}
+
+.civicrm-entity-salesforce-mapping .mapping-view {
+  margin-top:1em;
+}
+
+.civicrm-entity-salesforce-mapping .label {
+  font-weight:bold;
+  margin-right:5px;
+}
